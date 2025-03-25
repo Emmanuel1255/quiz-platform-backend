@@ -101,25 +101,22 @@ const bulkUploadQuestions = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    const filePath = req.file.path;
+    const fileBuffer = req.file.buffer;
     const fileExtension = path.extname(req.file.originalname).toLowerCase();
     
     let questions = [];
     
     // Parse the file based on its extension
     if (fileExtension === '.csv') {
-      // Parse CSV file
-      questions = await parseCSV(filePath);
+      // Parse CSV file from buffer
+      questions = await parseCSVBuffer(fileBuffer);
     } else if (['.xlsx', '.xls'].includes(fileExtension)) {
-      // Parse Excel file
-      questions = parseExcel(filePath);
+      // Parse Excel file from buffer
+      questions = parseExcelBuffer(fileBuffer);
     }
 
     // Validate and save questions
     const results = await processQuestions(questions, quiz._id, req.user._id);
-
-    // Clean up - delete the uploaded file
-    fs.unlinkSync(filePath);
 
     res.json({
       message: 'Questions uploaded successfully',
@@ -129,16 +126,18 @@ const bulkUploadQuestions = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Server Error' });
+    res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
 
-// Helper function to parse CSV files
-const parseCSV = (filePath) => {
+// Helper function to parse CSV buffer
+const parseCSVBuffer = (buffer) => {
   return new Promise((resolve, reject) => {
     const results = [];
+    // Create a readable stream from buffer
+    const stream = Readable.from(buffer.toString());
     
-    fs.createReadStream(filePath)
+    stream
       .pipe(csv())
       .on('data', (data) => results.push(data))
       .on('end', () => resolve(results))
@@ -146,15 +145,15 @@ const parseCSV = (filePath) => {
   });
 };
 
-// Helper function to parse Excel files
-const parseExcel = (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+// Helper function to parse Excel buffer
+const parseExcelBuffer = (buffer) => {
+  const workbook = xlsx.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
   return xlsx.utils.sheet_to_json(worksheet);
 };
 
-// Helper function to process and validate questions
+// Helper function to process and validate questions (remains mostly the same)
 const processQuestions = async (questions, quizId, creatorId) => {
   let successCount = 0;
   let errorCount = 0;
@@ -187,7 +186,7 @@ const processQuestions = async (questions, quizId, creatorId) => {
       if (questionData.questionType === 'multiple-choice') {
         for (let j = 1; j <= 4; j++) {
           const optionText = questionData[`option${j}`];
-          const isCorrect = questionData[`option${j}Correct`]?.toString().toUpperCase() === 'TRUE';
+          const isCorrect = String(questionData[`option${j}Correct`]).toUpperCase() === 'TRUE';
           
           if (optionText) {
             options.push({ text: optionText, isCorrect });
@@ -204,8 +203,8 @@ const processQuestions = async (questions, quizId, creatorId) => {
       } 
       // For true/false questions
       else if (questionData.questionType === 'true-false') {
-        options.push({ text: 'True', isCorrect: questionData.option1Correct?.toString().toUpperCase() === 'TRUE' });
-        options.push({ text: 'False', isCorrect: questionData.option2Correct?.toString().toUpperCase() === 'TRUE' });
+        options.push({ text: 'True', isCorrect: String(questionData.option1Correct).toUpperCase() === 'TRUE' });
+        options.push({ text: 'False', isCorrect: String(questionData.option2Correct).toUpperCase() === 'TRUE' });
         
         // Exactly one option must be correct for true/false
         const correctCount = options.filter(opt => opt.isCorrect).length;
